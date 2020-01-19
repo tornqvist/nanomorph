@@ -2,6 +2,7 @@ var assert = require('nanoassert')
 var morph = require('./lib/morph')
 
 var TEXT_NODE = 3
+var COMMENT_NODE = 8
 // var DEBUG = false
 
 module.exports = nanomorph
@@ -19,7 +20,8 @@ module.exports = nanomorph
 //   -> diff nodes and apply patch to old node
 // nodes are the same
 //   -> walk all child nodes and append to old node
-function nanomorph (oldTree, newTree, options) {
+function nanomorph (oldTree, newTree, opts) {
+  opts = opts || {}
   // if (DEBUG) {
   //   console.log(
   //   'nanomorph\nold\n  %s\nnew\n  %s',
@@ -30,8 +32,8 @@ function nanomorph (oldTree, newTree, options) {
   assert.equal(typeof oldTree, 'object', 'nanomorph: oldTree should be an object')
   assert.equal(typeof newTree, 'object', 'nanomorph: newTree should be an object')
 
-  if (options && options.childrenOnly) {
-    updateChildren(newTree, oldTree)
+  if (opts.childrenOnly) {
+    updateChildren(newTree, oldTree, opts.cache)
     return oldTree
   }
 
@@ -41,11 +43,11 @@ function nanomorph (oldTree, newTree, options) {
     'nanomorph: newTree should have one root node (which is not a DocumentFragment)'
   )
 
-  return walk(newTree, oldTree)
+  return walk(newTree, oldTree, opts.cache)
 }
 
 // Walk and morph a dom tree
-function walk (newNode, oldNode) {
+function walk (newNode, oldNode, cache) {
   // if (DEBUG) {
   //   console.log(
   //   'walk\nold\n  %s\nnew\n  %s',
@@ -53,17 +55,31 @@ function walk (newNode, oldNode) {
   //   newNode && newNode.outerHTML
   // )
   // }
+
   if (!oldNode) {
     return newNode
   } else if (!newNode) {
     return null
   } else if (newNode.isSameNode && newNode.isSameNode(oldNode)) {
+    if (cache && cache.has(newNode) && cache.has(oldNode)) {
+      cache.get(newNode).bind(oldNode)
+    }
     return oldNode
   } else if (newNode.tagName !== oldNode.tagName || getComponentId(newNode) !== getComponentId(oldNode)) {
+    if (cache && newNode.nodeType === COMMENT_NODE) {
+      if (newNode.isSameNode && newNode.isSameNode(oldNode)) {
+        cache.get(newNode).bind(oldNode)
+        return oldNode
+      }
+    }
     return newNode
   } else {
     morph(newNode, oldNode)
-    updateChildren(newNode, oldNode)
+    updateChildren(newNode, oldNode, cache)
+    if (cache && cache.has(newNode)) {
+      // console.log(cache.get(newNode))
+      cache.get(newNode).bind(oldNode)
+    }
     return oldNode
   }
 }
@@ -74,7 +90,7 @@ function getComponentId (node) {
 
 // Update the children of elements
 // (obj, obj) -> null
-function updateChildren (newNode, oldNode) {
+function updateChildren (newNode, oldNode, cache) {
   // if (DEBUG) {
   //   console.log(
   //   'updateChildren\nold\n  %s\nnew\n  %s',
@@ -113,7 +129,7 @@ function updateChildren (newNode, oldNode) {
 
     // Both nodes are the same, morph
     } else if (same(newChild, oldChild)) {
-      morphed = walk(newChild, oldChild)
+      morphed = walk(newChild, oldChild, cache)
       if (morphed !== oldChild) {
         oldNode.replaceChild(morphed, oldChild)
         offset++
@@ -133,13 +149,13 @@ function updateChildren (newNode, oldNode) {
 
       // If there was a node with the same ID or placeholder in the old list
       if (oldMatch) {
-        morphed = walk(newChild, oldMatch)
+        morphed = walk(newChild, oldMatch, cache)
         if (morphed !== oldMatch) offset++
         oldNode.insertBefore(morphed, oldChild)
 
       // It's safe to morph two nodes in-place if neither has an ID
       } else if (!newChild.id && !oldChild.id) {
-        morphed = walk(newChild, oldChild)
+        morphed = walk(newChild, oldChild, cache)
         if (morphed !== oldChild) {
           oldNode.replaceChild(morphed, oldChild)
           offset++
@@ -158,6 +174,6 @@ function same (a, b) {
   if (a.id) return a.id === b.id
   if (a.isSameNode) return a.isSameNode(b)
   if (a.tagName !== b.tagName) return false
-  if (a.type === TEXT_NODE) return a.nodeValue === b.nodeValue
+  if (a.nodeType === TEXT_NODE) return a.nodeValue === b.nodeValue
   return false
 }
